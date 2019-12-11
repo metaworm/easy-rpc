@@ -1,0 +1,17 @@
+[package]
+name = "easy-rpc"
+version = "0.1.0"
+authors = ["metaworm@outlook.com"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rmp = '*'
+rmpv = '*'
+serde = '*'
+rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust'}
+serde_bytes = '*'
+websocket = {version = '*', features = ['sync']}
+downcast-rs = '1.1.0'
+shared_memory = '0.10.0'

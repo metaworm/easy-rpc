@@ -1,0 +1,30 @@
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>EasyRpc Test</title>
+    <script type="text/javascript" src="../js/msgpack.js"></script>
+    <script type="text/javascript" src="../js/easy-rpc.js"></script>
+  </head>
+<body>
+</body>
+<script>
+window.onload = async e => {
+  const ECHO = 1
+  const BIGDATA = 2
+  try {
+    let session = await new EasySession('ws://localhost:3333', {
+      __onclose(e) {
+        console.log("OnClose", e)
+      },
+      [ECHO]: (arg) => {
+        console.log("Client Received", arg)
+        return arg + 1
+      },
+    })
+    console.assert(2, await session.request(ECHO, 0))
+  } catch (err) {
+    alert(err)
+  }
+}
+</script>
+</html>
