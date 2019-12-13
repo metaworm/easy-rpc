@@ -182,14 +182,6 @@ impl<T: std::fmt::Debug> From<T> for HandleError {
     fn from(e: T) -> Self { HandleError(format!("{:#?}", e)) }
 }
 
-// impl From<String> for HandleError {
-//     fn from(e: String) -> Self { HandleError(e) }
-// }
-
-// impl From<&str> for HandleError {
-//     fn from(e: &str) -> Self { HandleError(e.into()) }
-// }
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Method<'a> {
     Int(u32),

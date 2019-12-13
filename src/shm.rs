@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, Duration};
 
 use shared_memory::*;
-use crate::{Session, Adaptor, RecvError, ServiceT};
+use crate::{Adaptor, RecvError};
 
 pub use shared_memory::Timeout;
 
@@ -144,14 +144,14 @@ struct Communicator {
     ch2: Channel,
 }
 
-pub struct Communication {
+pub struct ShmAdaptor {
     shmem: UnsafeCell<SharedMem>,
     send_lock: Mutex<()>,
     connected: Cell<bool>,
     client: bool,
 }
 
-impl Communication {
+impl ShmAdaptor {
     const EVT_MASTER: usize = 0;
     const EVT_SLAVER: usize = 1;
 
@@ -199,7 +199,7 @@ impl Communication {
     }
 
     fn new(shmem: SharedMem, client: bool) -> Self {
-        Self {
+        ShmAdaptor {
             shmem: UnsafeCell::new(shmem),
             send_lock: Mutex::new(()),
             connected: Cell::new(true),
@@ -231,12 +231,11 @@ impl Communication {
     }
 }
 
-unsafe impl Send for Communication {}
-unsafe impl Sync for Communication {}
+unsafe impl Send for ShmAdaptor {}
+unsafe impl Sync for ShmAdaptor {}
 
-impl Adaptor for Communication {
+impl Adaptor for ShmAdaptor {
     fn send(&self, data: Vec<u8>) -> bool {
-        // println!("send");
         return self.send_frame(Frame::Data(data));
     }
 
@@ -267,17 +266,10 @@ impl Adaptor for Communication {
     fn close(&self) { /* TODO: */ }
 }
 
-pub fn create(path: &str) -> Result<Communication, SharedMemError> {
-    Communication::create(path)
+pub fn create(path: &str) -> Result<Arc<ShmAdaptor>, SharedMemError> {
+    Ok(Arc::new(ShmAdaptor::create(path)?))
 }
 
-pub fn create_and_wait(path: &str, service: ServiceT) -> Result<Session, SharedMemError> {
-    let cm = Communication::create(path)?;
-    // println!("create success");
-    cm.wait(Some(Timeout::Infinite));
-    Ok(Session::new(Arc::new(cm), service))
-}
-
-pub fn connect(path: &str, service: ServiceT) -> Result<Session, SharedMemError> {
-    Ok(Session::new(Arc::new(Communication::open(path)?), service))
+pub fn connect(path: &str) -> Result<Arc<ShmAdaptor>, SharedMemError> {
+    Ok(Arc::new(ShmAdaptor::open(path)?))
 }

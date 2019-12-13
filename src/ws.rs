@@ -1,8 +1,8 @@
 
+use std::io;
 use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
 use std::net::{TcpStream, TcpListener, ToSocketAddrs};
-pub use websocket::WebSocketError;
 
 use websocket::sync::{Server, Client};
 use websocket::server::NoTlsAcceptor;
@@ -11,18 +11,28 @@ use websocket::{
     OwnedMessage,
     client::{ClientBuilder, sync::{Reader, Writer}},
 };
+pub use websocket::WebSocketError;
 
-use crate::{Session, Adaptor, RecvError, ServiceT};
+use crate::{Adaptor, RecvError};
 
-pub struct WsSession;
-
-struct WsSendRecver {
+pub struct WsAdaptor {
     sender: Mutex<Writer<TcpStream>>,
     receiver: Mutex<Reader<TcpStream>>,
     disconnected: RwLock<bool>,
 }
 
-impl Adaptor for WsSendRecver {
+impl WsAdaptor {
+    pub fn new(client: Client<TcpStream>) -> io::Result<WsAdaptor> {
+        let (receiver, sender) = client.split()?;
+        Ok(WsAdaptor {
+            sender: Mutex::new(sender),
+            receiver: Mutex::new(receiver),
+            disconnected: RwLock::new(false),
+        })
+    }
+}
+
+impl Adaptor for WsAdaptor {
     fn send(&self, data: Vec<u8>) -> bool {
         self.sender.lock().unwrap()
                    .send_message(&OwnedMessage::Binary(data)).is_ok()
@@ -66,19 +76,6 @@ fn recv_message(r: &mut Reader<TcpStream>, s: &Mutex<Writer<TcpStream>>) -> Resu
     }
 }
 
-impl WsSession {
-    pub fn new(client: Client<TcpStream>, service: ServiceT) -> Session {
-        let (receiver, sender) = client.split().unwrap();
-        // let (data_send, data_recv) = channel::<Vec<u8>>();
-        let sr = Arc::new(WsSendRecver {
-            sender: Mutex::new(sender),
-            receiver: Mutex::new(receiver),
-            disconnected: RwLock::new(false),
-        });
-        Session::new(sr.clone(), service)
-    }
-}
-
 fn is_disconnected(err: &WebSocketError) -> bool {
     match *err {
         WebSocketError::NoDataAvailable => true,
@@ -87,29 +84,25 @@ fn is_disconnected(err: &WebSocketError) -> bool {
     }
 }
 
-use std::io;
-
 pub type ServerT = WsServer<NoTlsAcceptor, TcpListener>;
 
-pub fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<ServerT> { Server::bind(addr) }
-
-pub fn accept(server: &mut ServerT) -> Client<TcpStream> {
-    loop {
-        if let Ok(s) = server.accept() {
-            if let Ok(s) = s.accept() { return s; }
-        }
-    }
+pub fn bind(addr: impl ToSocketAddrs) -> io::Result<ServerT> {
+    Server::bind(addr)
 }
 
-pub fn accept_uri(server: &mut ServerT) -> (Client<TcpStream>, String) {
+pub fn accept(server: &mut ServerT) -> io::Result<(Arc<WsAdaptor>, String)> {
     loop {
         if let Ok(s) = server.accept() {
             let uri = s.uri();
-            if let Ok(s) = s.accept() { return (s, uri); }
+            if let Ok(s) = s.accept() {
+                return Ok((Arc::new(WsAdaptor::new(s)?), uri));
+            }
         }
     }
 }
 
-pub fn connect(url: &str) -> Result<Client<TcpStream>, WebSocketError> {
-    Ok(ClientBuilder::new(url).unwrap().connect_insecure()?)
+pub fn connect(url: &str) -> Result<Arc<WsAdaptor>, WebSocketError> {
+    Ok(Arc::new(WsAdaptor::new(
+        ClientBuilder::new(url).unwrap().connect_insecure()?
+    ).map_err(|e| WebSocketError::IoError(e))?))
 }
