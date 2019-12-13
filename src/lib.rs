@@ -1,29 +1,67 @@
 #![feature(unboxed_closures, fn_traits)]
 #![allow(unused_must_use)]
 
+//! `easy-rpc` is a cross-language RPC framework.
+//! # Example
+//! ```
+//! use std::sync::Arc;
+//! use easy_rpc::*;
+//! 
+//! struct ServerService;
+//! 
+//! impl Service for ServerService {
+//!     fn handle(&self, ss: &Session, arg: Arg, ret: Ret) -> Result<(), HandleError> {
+//!         use Method::*;
+//!         match arg.method {
+//!             Str("add") => {
+//!                 let (a, b) = arg.into::<(u32, u32)>()?;
+//!                 ret(a + b);
+//!             }
+//!             Str("print") => {
+//!                 println!("{}", arg.into::<String>()?);
+//!             }
+//!             _ => { return Err("No this method".into()) }
+//!         }
+//!         Ok(())
+//!     }
+//! }
+//! 
+//! std::thread::spawn(|| {
+//!     let mut ser = ws::bind("127.0.0.1:3333").unwrap();
+//!     let (adaptor, _uri) = ws::accept(&mut ser).unwrap();
+//!     Session::new(adaptor, Arc::new(ServerService)).loop_handle();
+//! });
+//! 
+//! std::thread::sleep_ms(100);
+//! let session = Session::new(ws::connect("ws://127.0.0.1:3333")?, Arc::new(EmptyService));
+//! session.notify("print", "a notify example");
+//! let val: u32 = session.request("add", (1, 2)).into()?;
+//! assert_eq!(val, 3);
+//! ```
+
 #[macro_use]
 extern crate downcast_rs;
 extern crate rmp_serde as rmps;
 
+/// Adaptor of WebSocket
 pub mod ws;
+/// Adaptor of SharedMemory
 pub mod shm;
 
+#[doc(no_inline)]
 pub use serde_bytes::{Bytes, ByteBuf};
-pub use rmps::decode::Error as DecodeError;
 
 use std::sync::{
     Arc, RwLock, Mutex,
     mpsc::{channel, Sender},
     atomic::{AtomicU32, Ordering},
 };
-use std::cell::Cell;
 use std::collections::HashMap;
-use std::thread::{self, ThreadId};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use rmps::Serializer;
-
+use rmps::decode::Error as DecodeError;
 use rmp::{encode, decode};
 use rmpv::{Value, decode::read_value};
 use downcast_rs::DowncastSync;
@@ -39,6 +77,7 @@ pub enum RecvError {
     MutexOccupied,
 }
 
+/// Adaptor of different communicated methods
 pub trait Adaptor: DowncastSync {
     // Send data
     fn send(&self, data: Vec<u8>) -> bool;
@@ -54,8 +93,10 @@ pub trait Adaptor: DowncastSync {
 }
 impl_downcast!(sync Adaptor);
 
+#[doc(hidden)]
 pub struct RespData(Vec<u8>, usize);
 
+/// Represent a response, returned by [`Session::request`]
 pub enum Response {
     Data(RespData),
     Error(String),
@@ -82,6 +123,7 @@ impl Response {
     }
 }
 
+/// Represent the arguments of a request/notify
 pub struct Arg<'a> {
     pub method: Method<'a>,
     pub bytes: &'a [u8],
@@ -95,6 +137,7 @@ impl<'a> Arg<'a> {
     }
 }
 
+/// Returner for a request, which can response some data
 pub struct Ret<'a, 'b> {
     ss: &'a Session,
     req_id: &'b mut Option<u32>,
@@ -104,7 +147,9 @@ impl<T> std::ops::FnOnce<(T, )> for Ret<'_, '_> where T: Serialize {
     type Output = ();
 
     extern "rust-call" fn call_once(self, arg: (T, )) -> Self::Output {
-        self.ret(arg.0)
+        if let Some(req_id) = self.req_id.take() {
+            self.ss.response(req_id, arg.0);
+        }
     }
 }
 
@@ -113,57 +158,53 @@ impl std::ops::FnOnce<(Response, )> for Ret<'_, '_> {
 
     extern "rust-call" fn call_once(self, arg: (Response, )) -> Self::Output {
         match arg.0 {
-            Response::Data(data) => { self.ret_raw(data.as_slice()) }
-            Response::Error(err) => { self.err(&err) }
+            Response::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
+            Response::Error(err) => { self.error(&err) }
         }
     }
 }
 
 impl<'a, 'b> Ret<'a, 'b> {
-    pub fn err(self, s: &str) {
+    pub fn error(self, s: &str) {
         if let Some(req_id) = self.req_id.take() {
             self.ss.response_error(req_id, s);
         }
     }
 
-    pub fn ret<T: Serialize>(self, r: T) {
-        if let Some(req_id) = self.req_id.take() {
-            self.ss.response(req_id, r);
-        }
-    }
-
-    pub fn ret_raw(self, data: &[u8]) {
+    pub unsafe fn ret_raw(self, msgpack: &[u8]) {
         if let Some(req_id) = self.req_id.take() {
             let mut resp = self.ss.prepare_response(req_id);
             encode::write_nil(&mut resp);
-            resp.extend_from_slice(data);
+            resp.extend_from_slice(msgpack);
             self.ss.send_pack(resp);
         }
     }
 
-    pub unsafe fn into_async(self) -> AsyncRet {
-        AsyncRet { ss: self.ss.arc_clone(), req_id: self.req_id.take().unwrap(), returned: Cell::new(false) }
+    /// Convert to AsyncRet. Be careful the session must be allocated by `Arc`
+    pub unsafe fn into_async(self) -> Option<AsyncRet> {
+        self.req_id.map(|req_id| AsyncRet { ss: self.ss.arc_clone(), req_id })
     }
 
+    /// Distinguish request/notify, return true if the packet is a request
     #[inline]
     pub fn is_valid(&self) -> bool { return self.req_id.is_some() }
 }
 
+/// Asynchronous returner
 pub struct AsyncRet {
     ss: Arc<Session>,
     req_id: u32,
-    returned: Cell<bool>,
 }
 
 impl AsyncRet {
-    pub fn err(self, s: &str) {
+    pub fn error(self, s: &str) {
         self.ss.response_error(self.req_id, s);
     }
 
-    pub fn ret_raw(self, data: &[u8]) {
+    pub unsafe fn ret_raw(self, msgpack: &[u8]) {
         let mut resp = self.ss.prepare_response(self.req_id);
         encode::write_nil(&mut resp);
-        resp.extend_from_slice(data);
+        resp.extend_from_slice(msgpack);
         self.ss.send_pack(resp);
     }
 }
@@ -172,7 +213,18 @@ impl<T> std::ops::FnOnce<(T, )> for AsyncRet where T: Serialize {
     type Output = ();
 
     extern "rust-call" fn call_once(self, arg: (T, )) -> Self::Output {
-        if !self.returned.replace(true) { self.ss.response(self.req_id, &arg.0) }
+        self.ss.response(self.req_id, &arg.0)
+    }
+}
+
+impl std::ops::FnOnce<(Response, )> for AsyncRet {
+    type Output = ();
+
+    extern "rust-call" fn call_once(self, arg: (Response, )) -> Self::Output {
+        match arg.0 {
+            Response::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
+            Response::Error(err) => { self.error(&err) }
+        }
     }
 }
 
@@ -182,6 +234,7 @@ impl<T: std::fmt::Debug> From<T> for HandleError {
     fn from(e: T) -> Self { HandleError(format!("{:#?}", e)) }
 }
 
+/// The method of request/notify, can be an integer or a string
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Method<'a> {
     Int(u32),
@@ -212,6 +265,7 @@ impl Method<'_> {
     }
 }
 
+/// A sugar for converting integer/string to `Method`
 pub trait ToMethod<'a> {
     fn to_method(self) -> Method<'a>;
 }
@@ -231,36 +285,40 @@ impl<'a> ToMethod<'a> for Method<'a> {
     fn to_method(self) -> Method<'a> { self }
 }
 
+/// User defined RPC service, handle the request/notify
 pub trait Service: DowncastSync {
-    fn handle(&self, _ss: &Session, _arg: Arg, _ret: Ret) -> Result<(), HandleError> { Ok(()) }
+    fn handle(&self, _ss: &Session, _arg: Arg, _ret: Ret) -> Result<(), HandleError> {
+        Err(HandleError("No this method".into()))
+    }
 }
 impl_downcast!(sync Service);
 
+/// A [`Service`] implementation for test
 pub struct EmptyService;
 impl Service for EmptyService {}
 
-pub type ServiceT = Arc<dyn Service + Send + Sync>;
+pub type ServiceType = Arc<dyn Service + Send + Sync>;
 
+/// Highly abstract communication endpoint
 pub struct Session {
     sender_table: RwLock<HashMap<u32, Sender<Response>>>,
     recv_mutex: Mutex<()>,
     id_counter: AtomicU32,
-    pub handle_tid: Cell<ThreadId>,
     pub adaptor: Arc<dyn Adaptor>,
-    pub service: ServiceT,
+    pub service: ServiceType,
 }
 
 impl Session {
-    pub fn new(adaptor: Arc<dyn Adaptor>, service: ServiceT) -> Session {
+    pub fn new(adaptor: Arc<dyn Adaptor>, service: ServiceType) -> Session {
         Session {
             sender_table: RwLock::new(HashMap::new()),
             recv_mutex: Mutex::new(()),
             id_counter: AtomicU32::new(1),
-            handle_tid: Cell::new(thread::current().id()),
             adaptor, service,
         }
     }
 
+    /// Convert `&Session` to `Arc<Session>`. Be careful the session must be allocated by `Arc`
     pub unsafe fn arc_clone(&self) -> Arc<Session> {
         let s0 = Arc::from_raw(self as *const Session);
         let s1 = s0.clone(); std::mem::forget(s0); s1
@@ -275,12 +333,15 @@ impl Session {
         }
     }
 
+    /// Receive a packet.
+    /// This function will always block the current thread if there is no packet available.
     pub fn recv_packet(&self) -> Result<Vec<u8>, RecvError> {
         if let Ok(_) = self.recv_mutex.try_lock() {
             self.adaptor.recv()
         } else { Err(RecvError::MutexOccupied) }
     }
 
+    /// Handle a packet which received by [`Session::recv_packet`]
     pub fn handle_packet(&self, pack: Vec<u8>) {
         let mut reader = &pack[..];
         let start_ptr = reader.as_ptr() as usize;
@@ -329,6 +390,7 @@ impl Session {
         }
     }
 
+    /// [`Session::recv_packet`] and then [`Session::handle_packet`] looply util the adaptor disconnect.
     pub fn loop_handle(&self) {
         loop {
             match self.recv_packet() {
@@ -338,12 +400,6 @@ impl Session {
             }
         }
     }
-
-    #[inline]
-    pub fn connected(&self) -> bool { self.adaptor.connected() }
-
-    #[inline]
-    pub fn close(&self) { self.adaptor.close() }
 
     fn send_pack(&self, frame: Vec<u8>) -> bool {
         self.adaptor.send(frame)
@@ -382,12 +438,15 @@ impl Session {
         (pack, req_id)
     }
 
+    /// Do a request.
+    /// This function will always block the current thread if the other side is not response.
     pub fn request<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> Response {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
         arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
         self.send_pack(pack); self.wait_response(req_id)
     }
 
+    /// Do a notify.
     pub fn notify<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> bool {
         let mut pack = self.prepare_notify(method.to_method());
         arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
@@ -408,15 +467,17 @@ impl Session {
         self.send_pack(pack);
     }
 
-    pub unsafe fn request_transfer<'a>(&self, method: impl ToMethod<'a>, arg: &[u8]) -> Response {
+    /// Do a request with msgpack bytes.
+    pub unsafe fn request_transfer<'a>(&self, method: impl ToMethod<'a>, msgpack: &[u8]) -> Response {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
-        pack.extend_from_slice(arg);
+        pack.extend_from_slice(msgpack);
         self.send_pack(pack); self.wait_response(req_id)
     }
 
-    pub unsafe fn notify_transfer<'a>(&self, method: impl ToMethod<'a>, arg: &[u8]) -> bool {
+    /// Do a notify with msgpack bytes.
+    pub unsafe fn notify_transfer<'a>(&self, method: impl ToMethod<'a>, msgpack: &[u8]) -> bool {
         let mut pack = self.prepare_notify(method.to_method());
-        pack.extend_from_slice(arg);
+        pack.extend_from_slice(msgpack);
         self.send_pack(pack)
     }
 
