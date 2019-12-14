@@ -1,17 +1,19 @@
 [package]
 name = "easy-rpc"
+license = "MIT"
 version = "0.1.0"
-authors = ["metaworm@outlook.com"]
+authors = ["metaworm <metaworm@outlook.com>"]
 edition = "2018"
+description = "A cross-language RPC framework"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rmp = '*'
-rmpv = '*'
-serde = '*'
-rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust'}
-serde_bytes = '*'
-websocket = {version = '*', features = ['sync']}
-downcast-rs = '1.1.0'
+rmp = '0.8.8'
+rmpv = '0.4.2'
+serde = '1.0.103'
+rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust', version = '0.14.0'}
+serde_bytes = '0.11.3'
+websocket = {version = '0.24.0', features = ['sync']}
+downcast-rs = '1.1.1'
 shared_memory = '0.10.0'
