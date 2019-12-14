@@ -5,53 +5,47 @@ use easy_rpc::*;
 struct ClientService;
 struct ServerService;
 
-const ADD_1: Method = Method::Int(1);
-const BIGDATA: Method = Method::Int(2);
+const RECURSIVE_ADD: u32 = 1;
+const ECHO_BIGDATA: u32 = 2;
 
-impl Service for ClientService {
-    fn handle(&self, _ss: &Session, arg: Arg, ret: Ret) -> Result<(), HandleError> {
-        match arg.method {
-            ADD_1 => {
-                let val = arg.into::<u32>()?;
-                println!("Client Received {:?}", val);
-                ret(val + 1);
-            }
-            _ => { /* Err("MethodNotFound".to_string()) */ }
+easy_service! {
+    ClientService(self, _ss, arg, ret)
+
+    IntegerMethod {
+        RECURSIVE_ADD => (val: u32) {
+            println!("Client Received {:?}", val);
+            val + 1
         }
-        Ok(())
     }
 }
 
-impl Service for ServerService {
-    fn handle(&self, ss: &Session, arg: Arg, ret: Ret) -> Result<(), HandleError> {
-        match arg.method {
-            ADD_1 => {
-                let val: u32 = arg.into()?;
-                println!("Server Received {:?}", val);
-                let val = ss.request(ADD_1, &val).into::<u32>()?;
-                println!("Server Requested {:?}", val);
-                ret(val + 1);
-            }
-            BIGDATA => {
-                let data: Vec<u8> = arg.into()?;
-                println!("BigData Received {}", data.len());
-                ret(data);
-            }
-            _ => { /* Err("MethodNotFound".to_string()) */ }
+easy_service! {
+    ServerService(self, ss, arg, ret)
+
+    IntegerMethod {
+        RECURSIVE_ADD => (val: u32) {
+            println!("Server Received {:?}", val);
+            let val = ss.request(RECURSIVE_ADD, &val).into::<u32>()?;
+            println!("Server Requested {:?}", val);
+            val + 1
         }
-        Ok(())
+        ECHO_BIGDATA => (data: Vec<u8>) {
+            println!("BigData Received {}", data.len());
+            data
+        }
     }
 }
 
 fn session_test(session: &Session) {
-    let val: u32 = session.request(ADD_1, 0).into().unwrap();
+    let val: u32 = session.request(RECURSIVE_ADD, 0).into().unwrap();
     assert_eq!(val, 2);
 
     const LEN: usize = 0x10000;
     let tail = &[1, 2, 3];
-    let mut data: Vec<u8> = Vec::with_capacity(LEN); data.resize(LEN, 0);
-    data.extend_from_slice(tail);
-    let data: Vec<u8> = session.request(BIGDATA, &data).into().unwrap();
+    let mut data: Vec<u8> = Vec::with_capacity(LEN);
+    data.resize(LEN, 0); data.extend_from_slice(tail);
+
+    let data: Vec<u8> = session.request(ECHO_BIGDATA, &data).into().unwrap();
     assert_eq!(data.len(), LEN + tail.len());
     assert_eq!(&data[data.len() - tail.len()..], tail);
 }

@@ -9,34 +9,41 @@
 //! 
 //! struct ServerService;
 //! 
-//! impl Service for ServerService {
-//!     fn handle(&self, ss: &Session, arg: Arg, ret: Ret) -> Result<(), HandleError> {
-//!         use Method::*;
-//!         match arg.method {
-//!             Str("add") => {
-//!                 let (a, b) = arg.into::<(u32, u32)>()?;
-//!                 ret(a + b);
-//!             }
-//!             Str("print") => {
-//!                 println!("{}", arg.into::<String>()?);
-//!             }
-//!             _ => { return Err("No this method".into()) }
+//! const MUL: u32 = 1;
+//! easy_service! {
+//!     ServerService(self, _ss, arg, response)
+//! 
+//!     StringMethod {
+//!         "add" => (a: u32, b: u32) {
+//!             a + b
 //!         }
-//!         Ok(())
+//!         "print" => (s: String) {
+//!             println!("{}", s);
+//!         }
+//!     }
+//!     IntegerMethod {
+//!         MUL => (a: u32, b: u32) {
+//!             a * b
+//!         }
 //!     }
 //! }
 //! 
-//! std::thread::spawn(|| {
-//!     let mut ser = ws::bind("127.0.0.1:3333").unwrap();
-//!     let (adaptor, _uri) = ws::accept(&mut ser).unwrap();
-//!     Session::new(adaptor, Arc::new(ServerService)).loop_handle();
-//! });
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     std::thread::spawn(|| {
+//!         let mut ser = ws::bind("127.0.0.1:3333").unwrap();
+//!         let (adaptor, _uri) = ws::accept(&mut ser).unwrap();
+//!         Session::new(adaptor, Arc::new(ServerService)).loop_handle();
+//!     });
 //! 
-//! std::thread::sleep_ms(100);
-//! let session = Session::new(ws::connect("ws://127.0.0.1:3333")?, Arc::new(EmptyService));
-//! session.notify("print", "a notify example");
-//! let val: u32 = session.request("add", (1, 2)).into()?;
-//! assert_eq!(val, 3);
+//!     std::thread::sleep_ms(100);
+//!     let session = Session::new(ws::connect("ws://127.0.0.1:3333")?, Arc::new(EmptyService));
+//!     let val: u32 = session.request("add", (1, 2)).into()?;
+//!     session.notify("print", format!("the result is {}", val));
+//!     let val: u32 = session.request(MUL, (2, 3)).into()?;
+//!     assert_eq!(val, 6);
+//! 
+//!     Ok(())
+//! }
 //! ```
 
 #[macro_use]
@@ -255,13 +262,29 @@ impl PartialEq<str> for Method<'_> {
     }
 }
 
-impl Method<'_> {
+impl<'a> Method<'a> {
     #[inline(always)]
     pub fn serialize<W: std::io::Write>(&self, w: &mut W) {
         match *self {
             Method::Int(i) => encode::write_u32(w, i),
             Method::Str(s) => encode::write_str(w, s),
         };
+    }
+
+    #[inline]
+    pub fn to_str(self) -> Result<&'a str, HandleError> {
+        match self {
+            Method::Int(_) => Err(HandleError("Method not match".into())),
+            Method::Str(s) => Ok(s),
+        }
+    }
+
+    #[inline]
+    pub fn to_int(self) -> Result<u32, HandleError> {
+        match self {
+            Method::Int(i) => Ok(i),
+            Method::Str(_) => Err(HandleError("Method not match".into())),
+        }
     }
 }
 
@@ -500,3 +523,98 @@ impl Session {
 
 unsafe impl Send for Session {}
 unsafe impl Sync for Session {}
+
+#[macro_export]
+macro_rules! easy_handle {
+    (@expand_args $arg:ident, $($i:ident: $t:ty),*) => {
+        let ($($i),*): ($($t),*) = $arg.into()?;
+    };
+
+    (
+        @switch $switch:expr, @arg $arg:ident, @ret $ret:ident,
+        $($m:tt => ($($argdef:tt)*) $block:block) *
+    ) => {
+        match $switch {
+            $($m => {
+                easy_handle!(@expand_args $arg, $($argdef)*);
+                $ret($block);
+            })*
+            _ => { return Err("Unhandled Method".into()); }
+        }
+    };
+
+    (
+        @switch $switch:expr, @arg $arg:ident,
+        $($m:tt => ($($argdef:tt)*) $block:block) *
+    ) => {
+        match $switch {
+            $($m => {
+                easy_handle!(@expand_args $arg, $($argdef)*);
+                $block
+            })*
+            _ => { return Err("Unhandled Method".into()); }
+        }
+    };
+
+    (
+        $arg:ident, $(@ret $ret:ident,)?
+        IntegerMethod { $($tts_int:tt)* }
+        $(Str($str_var:ident) => $handle_str:block)?
+    ) => {
+        use $crate::Method::*;
+        #[allow(unreachable_patterns)]
+        match $arg.method {
+            Int(i) => easy_handle!(@switch i, @arg $arg, $(@ret $ret,)? $($tts_int)*),
+            $(Str($str_var) => $handle_str,)?
+            _ => { return Err("Unhandled Method".into()); }
+        }
+    };
+
+    (
+        $arg:ident, $(@ret $ret:ident,)?
+        StringMethod { $($tts_str:tt)* }
+        $(Int($int_var:ident) => $handle_int:block)?
+    ) => {
+        use $crate::Method::*;
+        #[allow(unreachable_patterns)]
+        match $arg.method {
+            Str(s) => easy_handle!(@switch s, @arg $arg, $(@ret $ret,)? $($tts_str)*),
+            $(Int($int_var) => $handle_int,)?
+            _ => { return Err("Unhandled Method".into()); }
+        }
+    };
+
+    (
+        $arg:ident, $(@ret $ret:ident,)?
+        StringMethod { $($tts_str:tt)* }
+        IntegerMethod { $($tts_int:tt)* }
+    ) => {
+        use $crate::Method::*;
+        #[allow(unreachable_patterns)]
+        match $arg.method {
+            Str(s) => easy_handle!(@switch s, @arg $arg, $(@ret $ret,)? $($tts_str)*),
+            Int(i) => easy_handle!(@switch i, @arg $arg, $(@ret $ret,)? $($tts_int)*),
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! easy_service {
+    ($sv:tt($self_:tt, $ss:ident, $arg:ident, $ret:ident) $($tts:tt)*) => {
+        impl $crate::Service for $sv {
+            fn handle(&$self_, $ss: &Session, $arg: Arg, $ret: Ret) -> Result<(), HandleError> {
+                easy_handle!($arg, @ret $ret, $($tts)*);
+                Ok(())
+            }
+        }
+    };
+
+    (manual_response $sv:ident($self_:tt, $ss:ident, $arg:ident, $ret:ident) $($tts:tt)*) => {
+        impl $crate::Service for $sv {
+            fn handle(&$self_, $ss: &Session, $arg: Arg, $ret: Ret) -> Result<(), HandleError> {
+                easy_handle!($arg, $($tts)*);
+                Ok(())
+            }
+        }
+    };
+}
