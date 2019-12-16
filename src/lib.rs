@@ -63,6 +63,10 @@ use std::sync::{
     mpsc::{channel, Sender},
     atomic::{AtomicU32, Ordering},
 };
+use std::fmt::{
+    Debug, Display, Formatter,
+    Result as FmtResult
+};
 use std::collections::HashMap;
 
 use serde::Serialize;
@@ -79,9 +83,7 @@ const NOTIFY: u32 = 2;          // [NOTIFY, METHOD: u32, ARGS: Any]
 
 #[derive(Debug)]
 pub enum RecvError {
-    NoData,
-    Disconnected,
-    MutexOccupied,
+    Disconnect,
 }
 
 /// Adaptor of different communicated methods
@@ -103,15 +105,9 @@ impl_downcast!(sync Adaptor);
 #[doc(hidden)]
 pub struct RespData(Vec<u8>, usize);
 
-/// Represent a response, returned by [`Session::request`]
-pub enum Response {
-    Data(RespData),
-    Error(String),
-}
-
 impl RespData {
     #[inline]
-    pub fn into<T>(&self) -> Result<T, DecodeError> where T: DeserializeOwned {
+    pub fn into<T: DeserializeOwned>(&self) -> Result<T, DecodeError> {
         rmps::from_read_ref(self.as_slice())
     }
 
@@ -119,15 +115,44 @@ impl RespData {
     pub fn as_slice(&self) -> &[u8] { &self.0[self.1..] }
 }
 
-impl Response {
-    pub fn into<T>(self) -> Result<T, String> where T: DeserializeOwned {
+pub enum RequestResult {
+    Data(RespData),
+    Error(String),
+    Disconnect,
+    Decode(RespData),
+}
+
+impl std::error::Error for RequestResult {}
+
+impl Debug for RequestResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        use RequestResult::*;
+
         match self {
-            Response::Data(d) => {
-                rmps::from_read_ref(d.as_slice()).map_err(|e| format!("{:?}", e))
-            }
-            Response::Error(s) => { Err(s) }
+            Data(_) => write!(f, "<Success>"),
+            Error(ref s) => write!(f, "Error: {}", s),
+            Decode(_) => write!(f, "DecodeError"),
+            Disconnect => write!(f, "Disconnect"),
+        }; Ok(())
+    }
+}
+
+impl Display for RequestResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(self, f)
+    }
+}
+
+impl RequestResult {
+    pub fn into<T: DeserializeOwned>(self) -> Result<T, RequestResult> {
+        match self {
+            RequestResult::Data(d) => rmps::from_read_ref(d.as_slice()).map_err(|_| RequestResult::Decode(d)),
+            else_error => Err(else_error),
         }
     }
+
+    #[inline]
+    pub fn intos<T: DeserializeOwned>(self) -> Result<T, String> { self.into().map_err(|e| format!("{}", e)) }
 }
 
 /// Represent the arguments of a request/notify
@@ -160,13 +185,13 @@ impl<T> std::ops::FnOnce<(T, )> for Ret<'_, '_> where T: Serialize {
     }
 }
 
-impl std::ops::FnOnce<(Response, )> for Ret<'_, '_> {
+impl std::ops::FnOnce<(RequestResult, )> for Ret<'_, '_> {
     type Output = ();
 
-    extern "rust-call" fn call_once(self, arg: (Response, )) -> Self::Output {
+    extern "rust-call" fn call_once(self, arg: (RequestResult, )) -> Self::Output {
         match arg.0 {
-            Response::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
-            Response::Error(err) => { self.error(&err) }
+            RequestResult::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
+            RequestResult::Error(err) => { self.error(&err) } _ => {}
         }
     }
 }
@@ -224,13 +249,13 @@ impl<T> std::ops::FnOnce<(T, )> for AsyncRet where T: Serialize {
     }
 }
 
-impl std::ops::FnOnce<(Response, )> for AsyncRet {
+impl std::ops::FnOnce<(RequestResult, )> for AsyncRet {
     type Output = ();
 
-    extern "rust-call" fn call_once(self, arg: (Response, )) -> Self::Output {
+    extern "rust-call" fn call_once(self, arg: (RequestResult, )) -> Self::Output {
         match arg.0 {
-            Response::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
-            Response::Error(err) => { self.error(&err) }
+            RequestResult::Data(data) => unsafe { self.ret_raw(data.as_slice()) }
+            RequestResult::Error(err) => { self.error(&err) } _ => {}
         }
     }
 }
@@ -324,7 +349,7 @@ pub type ServiceType = Arc<dyn Service + Send + Sync>;
 
 /// Highly abstract communication endpoint
 pub struct Session {
-    sender_table: RwLock<HashMap<u32, Sender<Response>>>,
+    sender_table: RwLock<HashMap<u32, Sender<RequestResult>>>,
     recv_mutex: Mutex<()>,
     id_counter: AtomicU32,
     pub adaptor: Arc<dyn Adaptor>,
@@ -358,10 +383,10 @@ impl Session {
 
     /// Receive a packet.
     /// This function will always block the current thread if there is no packet available.
-    pub fn recv_packet(&self) -> Result<Vec<u8>, RecvError> {
+    pub fn recv_packet(&self) -> Option<Result<Vec<u8>, RecvError>> {
         if let Ok(_) = self.recv_mutex.try_lock() {
-            self.adaptor.recv()
-        } else { Err(RecvError::MutexOccupied) }
+            Some(self.adaptor.recv())
+        } else { None }
     }
 
     /// Handle a packet which received by [`Session::recv_packet`]
@@ -403,9 +428,9 @@ impl Session {
                 if let Some(sender) = self.sender_table.write().unwrap().remove(&req_id) {
                     sender.send(if error.is_nil() {
                         let offset = reader.as_ptr() as usize - start_ptr;
-                        Response::Data(RespData(pack, offset))
+                        RequestResult::Data(RespData(pack, offset))
                     } else {
-                        Response::Error(error.as_str().unwrap().into())
+                        RequestResult::Error(error.as_str().unwrap().into())
                     });
                 }
             }
@@ -417,36 +442,27 @@ impl Session {
     pub fn loop_handle(&self) {
         loop {
             match self.recv_packet() {
-                Err(RecvError::Disconnected) => break,
-                Ok(pack) => self.handle_packet(pack),
+                Some(Ok(pack)) => self.handle_packet(pack),
+                Some(Err(RecvError::Disconnect)) => break,
                 _ => {}
             }
         }
     }
 
-    fn send_pack(&self, frame: Vec<u8>) -> bool {
-        self.adaptor.send(frame)
-    }
+    fn send_pack(&self, frame: Vec<u8>) -> bool { self.adaptor.send(frame) }
 
-    fn next_id(&self) -> u32 {
-        self.id_counter.fetch_add(1, Ordering::SeqCst)
-    }
+    fn next_id(&self) -> u32 { self.id_counter.fetch_add(1, Ordering::SeqCst) }
 
-    fn wait_response(&self, req_id: u32) -> Response {
-        let (sender, recver) = channel::<Response>();
+    fn wait_response(&self, req_id: u32) -> RequestResult {
+        use RecvError::*;
+        let (sender, recver) = channel::<RequestResult>();
         self.sender_table.write().unwrap().insert(req_id, sender);
         loop {
+            if let Ok(r) = recver.try_recv() { break r; }
             match self.recv_packet() {
-                Ok(pack) => {
-                    self.handle_packet(pack);
-                    if let Ok(r) = recver.try_recv() {
-                        break r;
-                    }
-                }
-                Err(RecvError::MutexOccupied) => {
-                    break recver.recv().unwrap();
-                }
-                _ => {}
+                None => break recver.recv().unwrap(),
+                Some(Ok(pack)) => { self.handle_packet(pack); }
+                Some(Err(Disconnect)) => break RequestResult::Disconnect,
             }
         }
     }
@@ -463,7 +479,7 @@ impl Session {
 
     /// Do a request.
     /// This function will always block the current thread if the other side is not response.
-    pub fn request<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> Response {
+    pub fn request<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> RequestResult {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
         arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
         self.send_pack(pack); self.wait_response(req_id)
@@ -491,7 +507,7 @@ impl Session {
     }
 
     /// Do a request with msgpack bytes.
-    pub unsafe fn request_transfer<'a>(&self, method: impl ToMethod<'a>, msgpack: &[u8]) -> Response {
+    pub unsafe fn request_transfer<'a>(&self, method: impl ToMethod<'a>, msgpack: &[u8]) -> RequestResult {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
         pack.extend_from_slice(msgpack);
         self.send_pack(pack); self.wait_response(req_id)

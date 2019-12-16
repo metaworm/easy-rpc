@@ -253,7 +253,7 @@ impl Adaptor for ShmAdaptor {
                 }
             } else if ping_time > 200 {
                 self.connected.set(false);
-                return Err(RecvError::Disconnected);
+                return Err(RecvError::Disconnect);
             } else {
                 ping_time += CELL_TIMEOUT;
                 self.send_frame(Frame::Ping);

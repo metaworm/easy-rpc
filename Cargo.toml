@@ -12,7 +12,7 @@ description = "A cross-language RPC framework"
 rmp = '0.8.8'
 rmpv = '0.4.2'
 serde = '1.0.103'
-rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust', version = '0.14.0'}
+rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust'}
 serde_bytes = '0.11.3'
 websocket = {version = '0.24.0', features = ['sync']}
 downcast-rs = '1.1.1'

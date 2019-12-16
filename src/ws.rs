@@ -43,7 +43,7 @@ impl Adaptor for WsAdaptor {
             Err(e) => {
                 if is_disconnected(&e) {
                     *self.disconnected.write().unwrap() = true;
-                    Err(RecvError::Disconnected)
+                    Err(RecvError::Disconnect)
                 } else { panic!("Invalid Error: {:?}", e); }
             }
             Ok(data) => { Ok(data) }
