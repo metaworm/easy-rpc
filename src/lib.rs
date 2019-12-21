@@ -546,70 +546,60 @@ macro_rules! easy_handle {
         let ($($i),*): ($($t),*) = $arg.into()?;
     };
 
+    (@body_option $ret:ident manual $body:block) => { $body };
+    (@body_option $ret:ident $body:block) => { $ret($body) };
+
     (
-        @switch $switch:expr, @arg $arg:ident, @ret $ret:ident,
-        $($m:tt => ($($argdef:tt)*) $block:block) *
+        @switch $switch:expr, $arg:ident, $ret:ident,
+        $($m:tt => ($($argdef:tt)*) $($body_option:ident)? $block:block) *
     ) => {
         match $switch {
             $($m => {
                 easy_handle!(@expand_args $arg, $($argdef)*);
-                $ret($block);
+                easy_handle!(@body_option $ret $($body_option)? $block)
             })*
             _ => { return Err("Unhandled Method".into()); }
         }
     };
 
     (
-        @switch $switch:expr, @arg $arg:ident,
-        $($m:tt => ($($argdef:tt)*) $block:block) *
-    ) => {
-        match $switch {
-            $($m => {
-                easy_handle!(@expand_args $arg, $($argdef)*);
-                $block
-            })*
-            _ => { return Err("Unhandled Method".into()); }
-        }
-    };
-
-    (
-        $arg:ident, $(@ret $ret:ident,)?
+        $arg:ident, $ret:ident,
         IntegerMethod { $($tts_int:tt)* }
         $(Str($str_var:ident) => $handle_str:block)?
     ) => {
         use $crate::Method::*;
         #[allow(unreachable_patterns)]
         match $arg.method {
-            Int(i) => easy_handle!(@switch i, @arg $arg, $(@ret $ret,)? $($tts_int)*),
+            Int(i) => easy_handle!(@switch i, $arg, $ret, $($tts_int)*),
             $(Str($str_var) => $handle_str,)?
             _ => { return Err("Unhandled Method".into()); }
         }
     };
 
     (
-        $arg:ident, $(@ret $ret:ident,)?
+        $arg:ident, $ret:ident,
         StringMethod { $($tts_str:tt)* }
         $(Int($int_var:ident) => $handle_int:block)?
     ) => {
         use $crate::Method::*;
         #[allow(unreachable_patterns)]
         match $arg.method {
-            Str(s) => easy_handle!(@switch s, @arg $arg, $(@ret $ret,)? $($tts_str)*),
+            Str(s) => easy_handle!(@switch s, $arg, $ret, $($tts_str)*),
             $(Int($int_var) => $handle_int,)?
             _ => { return Err("Unhandled Method".into()); }
         }
     };
 
     (
-        $arg:ident, $(@ret $ret:ident,)?
+        $arg:ident, $ret:ident,
         StringMethod { $($tts_str:tt)* }
         IntegerMethod { $($tts_int:tt)* }
     ) => {
         use $crate::Method::*;
         #[allow(unreachable_patterns)]
         match $arg.method {
-            Str(s) => easy_handle!(@switch s, @arg $arg, $(@ret $ret,)? $($tts_str)*),
-            Int(i) => easy_handle!(@switch i, @arg $arg, $(@ret $ret,)? $($tts_int)*),
+            Str(s) => easy_handle!(@switch s, $arg, $ret, $($tts_str)*),
+            Int(i) => easy_handle!(@switch i, $arg, $ret, $($tts_int)*),
         }
     };
 }
@@ -619,16 +609,7 @@ macro_rules! easy_service {
     ($sv:tt($self_:tt, $ss:ident, $arg:ident, $ret:ident) $($tts:tt)*) => {
         impl $crate::Service for $sv {
             fn handle(&$self_, $ss: &Session, $arg: Arg, $ret: Ret) -> Result<(), HandleError> {
-                easy_handle!($arg, @ret $ret, $($tts)*);
-                Ok(())
-            }
-        }
-    };
-
-    (manual_response $sv:ident($self_:tt, $ss:ident, $arg:ident, $ret:ident) $($tts:tt)*) => {
-        impl $crate::Service for $sv {
-            fn handle(&$self_, $ss: &Session, $arg: Arg, $ret: Ret) -> Result<(), HandleError> {
-                easy_handle!($arg, $($tts)*);
+                easy_handle!($arg, $ret, $($tts)*);
                 Ok(())
             }
         }
