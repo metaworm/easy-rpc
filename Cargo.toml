@@ -20,5 +20,7 @@ serde = '1.0.103'
 rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust'}
 serde_bytes = '0.11.3'
 downcast-rs = '1.1.1'
-websocket = {version = '0.24.0', features = ['sync'], optional = true}
+websocket = {version = '0.24.0', default-features = false, features = ['sync', 'async'], optional = true}
+
+[target.'cfg(not(target_os="android"))'.dependencies]
 shared_memory = {version = '0.10.0', optional = true}

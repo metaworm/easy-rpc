@@ -51,8 +51,10 @@ extern crate downcast_rs;
 extern crate rmp_serde as rmps;
 
 /// Adaptor of WebSocket
+#[cfg(feature = "ws")]
 pub mod ws;
 /// Adaptor of SharedMemory
+#[cfg(all(feature = "shm", not(target_os = "android")))]
 pub mod shm;
 
 #[doc(no_inline)]
