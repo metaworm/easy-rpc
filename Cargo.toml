@@ -17,7 +17,7 @@ shm = ['shared_memory']
 rmp = '0.8.8'
 rmpv = '0.4.2'
 serde = '1.0.103'
-rmp-serde = {git = 'https://github.com/3Hren/msgpack-rust'}
+rmp-serde = '0.14.2'
 serde_bytes = '0.11.3'
 downcast-rs = '1.1.1'
 websocket = {version = '0.24.0', default-features = false, features = ['sync', 'async'], optional = true}

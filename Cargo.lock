@@ -74,7 +74,7 @@ version = "0.1.0"
 dependencies = [
  "downcast-rs 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "rmp-serde 0.14.0 (git+https://github.com/3Hren/msgpack-rust)",
+ "rmp-serde 0.14.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmpv 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.103 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_bytes 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -507,15 +507,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rmp"
 version = "0.8.8"
-source = "git+https://github.com/3Hren/msgpack-rust#1654e5cd6b250fdc234c8923b85491c914d766af"
-dependencies = [
- "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "rmp"
-version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -524,11 +515,11 @@ dependencies = [
 
 [[package]]
 name = "rmp-serde"
-version = "0.14.0"
-source = "git+https://github.com/3Hren/msgpack-rust#1654e5cd6b250fdc234c8923b85491c914d766af"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "rmp 0.8.8 (git+https://github.com/3Hren/msgpack-rust)",
+ "rmp 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.103 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -933,9 +924,8 @@ dependencies = [
 "checksum rand_xorshift 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cbf7e9e623549b0e21f6e97cf8ecf247c1a8fd2e8a992ae265314300b2455d5c"
 "checksum rdrand 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 "checksum redox_syscall 0.1.56 (registry+https://github.com/rust-lang/crates.io-index)" = "2439c63f3f6139d1b57529d16bc3b8bb855230c8efcc5d3a896c8bea7c3b1e84"
-"checksum rmp 0.8.8 (git+https://github.com/3Hren/msgpack-rust)" = "<none>"
 "checksum rmp 0.8.8 (registry+https://github.com/rust-lang/crates.io-index)" = "0f594cb7ff8f1c5a7907f6be91f15795c8301e0d5718eb007fb5832723dd716e"
-"checksum rmp-serde 0.14.0 (git+https://github.com/3Hren/msgpack-rust)" = "<none>"
+"checksum rmp-serde 0.14.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d8c7548e6ea689dd65fd72797e7b7a1ef6d56069ed62171f6f6f484c253ec442"
 "checksum rmpv 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "83caf745acbd99179ab6ce95398ddf548edfa2d3a99ff195248b30cd1524c43f"
 "checksum rustc-serialize 0.3.24 (registry+https://github.com/rust-lang/crates.io-index)" = "dcf128d1287d2ea9d80910b5f1120d0b8eede3fbf1abe91c40d39ea7d51e6fda"
 "checksum rustc_version 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
