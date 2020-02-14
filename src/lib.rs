@@ -445,8 +445,11 @@ impl Session {
         loop {
             match self.recv_packet() {
                 Some(Ok(pack)) => self.handle_packet(pack),
-                Some(Err(RecvError::Disconnect)) => break,
-                _ => {}
+                Some(Err(RecvError::Disconnect)) => {
+                    self.sender_table.write().unwrap().clear();
+                    break;
+                },
+                err => { panic!("unexpected error: {:?}", err); }
             }
         }
     }
@@ -462,7 +465,7 @@ impl Session {
         loop {
             if let Ok(r) = recver.try_recv() { break r; }
             match self.recv_packet() {
-                None => break recver.recv().unwrap(),
+                None => break recver.recv().unwrap_or(RequestResult::Disconnect),
                 Some(Ok(pack)) => { self.handle_packet(pack); }
                 Some(Err(Disconnect)) => break RequestResult::Disconnect,
             }
