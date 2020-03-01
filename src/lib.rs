@@ -434,7 +434,7 @@ impl Session {
                     } else {
                         RequestResult::Error(error.as_str().unwrap().into())
                     });
-                }
+                } else { panic!("sender not found"); }
             }
             _else => { panic!("Invalid PackType"); }
         }
@@ -458,10 +458,11 @@ impl Session {
 
     fn next_id(&self) -> u32 { self.id_counter.fetch_add(1, Ordering::SeqCst) }
 
-    fn wait_response(&self, req_id: u32) -> RequestResult {
+    fn send_and_wait_response(&self, req_id: u32, pack: Vec<u8>) -> RequestResult {
         use RecvError::*;
         let (sender, recver) = channel::<RequestResult>();
         self.sender_table.write().unwrap().insert(req_id, sender);
+        self.send_pack(pack);
         loop {
             if let Ok(r) = recver.try_recv() { break r; }
             match self.recv_packet() {
@@ -487,7 +488,7 @@ impl Session {
     pub fn request<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> RequestResult {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
         arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
-        self.send_pack(pack); self.wait_response(req_id)
+        self.send_and_wait_response(req_id, pack)
     }
 
     /// Do a notify.
@@ -515,7 +516,7 @@ impl Session {
     pub unsafe fn request_transfer<'a>(&self, method: impl ToMethod<'a>, msgpack: &[u8]) -> RequestResult {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
         pack.extend_from_slice(msgpack);
-        self.send_pack(pack); self.wait_response(req_id)
+        self.send_and_wait_response(req_id, pack)
     }
 
     /// Do a notify with msgpack bytes.
