@@ -534,6 +534,12 @@ impl Session {
         self.send_pack(pack)
     }
 
+    pub unsafe fn response_transfer<'a>(&self, req_id: u32, msgpack: &[u8]) -> bool {
+        let mut pack = self.prepare_response(req_id);
+        pack.extend_from_slice(msgpack);
+        self.send_pack(pack)
+    }
+
     fn prepare_notify(&self, method: Method) -> Vec<u8> {
         let mut pack: Vec<u8> = Vec::new();
         encode::write_array_len(&mut pack, 3);
