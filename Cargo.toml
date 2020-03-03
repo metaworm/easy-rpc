@@ -12,6 +12,7 @@ description = "A cross-language RPC framework"
 default = ['ws', 'shm']
 ws = ['websocket']
 shm = ['shared_memory']
+struct_map = []
 
 [dependencies]
 rmp = '0.8.8'

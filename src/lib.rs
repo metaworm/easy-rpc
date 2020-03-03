@@ -483,25 +483,33 @@ impl Session {
         (pack, req_id)
     }
 
+    fn serialize<S: Serialize, W: std::io::Write>(arg: &S, w: W) {
+        if cfg!(feature = "struct_map") {
+            arg.serialize(&mut Serializer::new(w).with_struct_map());
+        } else {
+            arg.serialize(&mut Serializer::new(w));
+        }
+    }
+
     /// Do a request.
     /// This function will always block the current thread if the other side is not response.
     pub fn request<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> RequestResult {
         let (mut pack, req_id) = self.prepare_request(method.to_method());
-        arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
+        Self::serialize(&arg, &mut pack);
         self.send_and_wait_response(req_id, pack)
     }
 
     /// Do a notify.
     pub fn notify<'a>(&self, method: impl ToMethod<'a>, arg: impl Serialize) -> bool {
         let mut pack = self.prepare_notify(method.to_method());
-        arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
+        Self::serialize(&arg, &mut pack);
         self.send_pack(pack)
     }
 
     fn response(&self, req_id: u32, arg: impl Serialize) {
         let mut pack = self.prepare_response(req_id);
         encode::write_nil(&mut pack);
-        arg.serialize(&mut Serializer::new(&mut pack).with_struct_map());
+        Self::serialize(&arg, &mut pack);
         self.send_pack(pack);
     }
 
