@@ -536,7 +536,15 @@ impl Session {
 
     pub unsafe fn response_transfer<'a>(&self, req_id: u32, msgpack: &[u8]) -> bool {
         let mut pack = self.prepare_response(req_id);
+        encode::write_nil(&mut pack);
         pack.extend_from_slice(msgpack);
+        self.send_pack(pack)
+    }
+
+    pub unsafe fn response_error_transfer<'a>(&self, req_id: u32, err: &str) -> bool {
+        let mut pack = self.prepare_response(req_id);
+        encode::write_str(&mut pack, err);
+        encode::write_nil(&mut pack);
         self.send_pack(pack)
     }
 
