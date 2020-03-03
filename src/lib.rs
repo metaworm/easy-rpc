@@ -562,9 +562,10 @@ unsafe impl Sync for Session {}
 
 #[macro_export]
 macro_rules! easy_handle {
-    (@expand_args $arg:ident, $($i:ident: $t:ty),*) => {
-        let ($($i),*): ($($t),*) = $arg.into()?;
+    (@expand_args $arg:ident, $($i:ident: $t:ty),+) => {
+        let ($($i),+): ($($t),+) = $arg.into()?;
     };
+    (@expand_args $arg:ident,) => {};
 
     (@body_option $ret:ident manual $body:block) => { $body };
     (@body_option $ret:ident $body:block) => { $ret($body) };
